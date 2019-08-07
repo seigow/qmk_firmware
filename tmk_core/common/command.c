@@ -34,6 +34,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "command.h"
 #include "backlight.h"
 #include "quantum.h"
+#include "version.h"
 
 #ifdef MOUSEKEY_ENABLE
 #include "mousekey.h"
@@ -150,17 +151,17 @@ static void command_common_help(void)
 		                            "0-9:	Switch to Layer 0-9\n"
 #endif
 
-		STR(MAGIC_KEY_LAYER0_ALT1 ) ":	Switch to Layer 0 (alternate key 1)\n"
-		STR(MAGIC_KEY_LAYER0_ALT2 ) ":	Switch to Layer 0 (alternate key 2)\n"
-		STR(MAGIC_KEY_BOOTLOADER  ) ":	Jump to Bootloader (Reset)\n"
+		STR(MAGIC_KEY_LAYER0_ALT  ) ":	Switch to Layer 0 (alternate)\n"
+
+		STR(MAGIC_KEY_BOOTLOADER    ) ":	Jump to Bootloader\n"
+		STR(MAGIC_KEY_BOOTLOADER_ALT) ":	Jump to Bootloader (alternate)\n"
 
 #ifdef KEYBOARD_LOCK_ENABLE
-		STR(MAGIC_KEY_LOCK        ) ":	Lock\n"
+		STR(MAGIC_KEY_LOCK        ) ":	Lock Keyboard\n"
 #endif
 
-#ifdef BOOTMAGIC_ENABLE
 		STR(MAGIC_KEY_EEPROM      ) ":	Print EEPROM Settings\n"
-#endif
+		STR(MAGIC_KEY_EEPROM_CLEAR) ":	Clear EEPROM\n"
 
 #ifdef NKRO_ENABLE
 		STR(MAGIC_KEY_NKRO        ) ":	NKRO Toggle\n"
@@ -180,7 +181,11 @@ static void print_version(void)
     print("VID: " STR(VENDOR_ID) "(" STR(MANUFACTURER) ") "
           "PID: " STR(PRODUCT_ID) "(" STR(PRODUCT) ") "
           "VER: " STR(DEVICE_VER) "\n");
-    print("BUILD: " STR(VERSION) " (" __TIME__ " " __DATE__ ")\n");
+#ifdef SKIP_VERSION
+    print("BUILD:  (" __DATE__ ")\n");
+#else
+    print("BUILD: " STR(QMK_VERSION) " (" __TIME__ " " __DATE__ ")\n");
+#endif
 
     /* build options */
     print("OPTIONS:"
@@ -234,10 +239,13 @@ static void print_status(void)
     print("\n\t- Status -\n");
 
     print_val_hex8(host_keyboard_leds());
+#ifndef PROTOCOL_VUSB
+    // these aren't set on the V-USB protocol, so we just ignore them for now
     print_val_hex8(keyboard_protocol);
     print_val_hex8(keyboard_idle);
+#endif
 #ifdef NKRO_ENABLE
-    print_val_hex8(keyboard_nkro);
+    print_val_hex8(keymap_config.nkro);
 #endif
     print_val_hex32(timer_read32());
 
@@ -257,10 +265,12 @@ static void print_status(void)
 	return;
 }
 
-#ifdef BOOTMAGIC_ENABLE
 static void print_eeconfig(void)
 {
-#ifndef NO_PRINT
+
+// Print these variables if NO_PRINT or USER_PRINT are not defined.
+#if !defined(NO_PRINT) && !defined(USER_PRINT)
+
     print("default_layer: "); print_dec(eeconfig_read_default_layer()); print("\n");
 
     debug_config_t dc;
@@ -294,7 +304,6 @@ static void print_eeconfig(void)
 #endif /* !NO_PRINT */
 
 }
-#endif /* BOOTMAGIC_ENABLE */
 
 static bool command_common(uint8_t code)
 {
@@ -315,14 +324,17 @@ static bool command_common(uint8_t code)
             break;
 #endif
 
-#ifdef BOOTMAGIC_ENABLE
-
 		// print stored eeprom config
         case MAGIC_KC(MAGIC_KEY_EEPROM):
             print("eeconfig:\n");
             print_eeconfig();
             break;
-#endif
+
+		// clear eeprom
+        case MAGIC_KC(MAGIC_KEY_EEPROM_CLEAR):
+            print("Clearing EEPROM\n");
+	    eeconfig_init();
+            break;
 
 #ifdef KEYBOARD_LOCK_ENABLE
 
@@ -341,8 +353,8 @@ static bool command_common(uint8_t code)
 #endif
 
 		// print help
-        case MAGIC_KC(MAGIC_KEY_HELP1):
-        case MAGIC_KC(MAGIC_KEY_HELP2):
+        case MAGIC_KC(MAGIC_KEY_HELP):
+        case MAGIC_KC(MAGIC_KEY_HELP_ALT):
             command_common_help();
             break;
 
@@ -359,6 +371,7 @@ static bool command_common(uint8_t code)
 
         // jump to bootloader
         case MAGIC_KC(MAGIC_KEY_BOOTLOADER):
+        case MAGIC_KC(MAGIC_KEY_BOOTLOADER_ALT):
             clear_keyboard(); // clear to prevent stuck keys
             print("\n\nJumping to bootloader... ");
             #ifdef AUDIO_ENABLE
@@ -375,9 +388,6 @@ static bool command_common(uint8_t code)
             debug_enable = !debug_enable;
             if (debug_enable) {
                 print("\ndebug: on\n");
-                debug_matrix   = true;
-                debug_keyboard = true;
-                debug_mouse    = true;
             } else {
                 print("\ndebug: off\n");
                 debug_matrix   = false;
@@ -434,8 +444,8 @@ static bool command_common(uint8_t code)
 		// NKRO toggle
         case MAGIC_KC(MAGIC_KEY_NKRO):
             clear_keyboard(); // clear to prevent stuck keys
-            keyboard_nkro = !keyboard_nkro;
-            if (keyboard_nkro) {
+            keymap_config.nkro = !keymap_config.nkro;
+            if (keymap_config.nkro) {
                 print("NKRO: on\n");
             } else {
                 print("NKRO: off\n");
@@ -445,8 +455,7 @@ static bool command_common(uint8_t code)
 
 		// switch layers
 
-		case MAGIC_KC(MAGIC_KEY_LAYER0_ALT1):
-		case MAGIC_KC(MAGIC_KEY_LAYER0_ALT2):
+		case MAGIC_KC(MAGIC_KEY_LAYER0_ALT):
             switch_default_layer(0);
             break;
 
@@ -570,7 +579,8 @@ static uint8_t mousekey_param = 0;
 
 static void mousekey_param_print(void)
 {
-#ifndef NO_PRINT
+// Print these variables if NO_PRINT or USER_PRINT are not defined.
+#if !defined(NO_PRINT) && !defined(USER_PRINT)
     print("\n\t- Values -\n");
     print("1: delay(*10ms): "); pdec(mk_delay); print("\n");
     print("2: interval(ms): "); pdec(mk_interval); print("\n");
